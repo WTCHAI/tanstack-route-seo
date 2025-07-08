@@ -1,8 +1,9 @@
+import { Buffer } from 'buffer'
 import path from 'node:path'
-import { Elysia } from 'elysia'
+
 import { staticPlugin } from '@elysiajs/static'
+import { Elysia } from 'elysia'
 import getPort, { portNumbers } from 'get-port'
-// import './src/fetch-polyfill.js'
 
 const isTest = process.env.NODE_ENV === 'test' || !!process.env.VITE_TEST_BUILD
 
@@ -226,7 +227,7 @@ export async function createServer(
     )
   }
 
-  // Handle all routes for SSR
+  // In your server file - replace the SSR section with this:
   app.all('*', async ({ request, set }) => {
     try {
       const url = new URL(request.url)
@@ -234,7 +235,6 @@ export async function createServer(
 
       // Skip non-HTML requests
       if (path.extname(pathname) !== '') {
-        console.warn(`${pathname} is not valid router path`)
         set.status = 404
         return `${pathname} is not valid router path`
       }
@@ -256,40 +256,30 @@ export async function createServer(
         ? await vite.ssrLoadModule('/src/entry-server.tsx')
         : await import('./dist/server/entry-server.js')
 
-      console.info('Rendering: ', pathname, '...')
+      console.info('Rendering:', pathname)
 
-      // Create request/response objects for compatibility
-      const mockReq = {
-        originalUrl: pathname,
-        url: pathname,
-        method: request.method,
-        headers: Object.fromEntries(request.headers.entries()),
+      // FIXED: Call render function directly
+      const result = await entry.render(pathname, viteHead)
+
+      // Handle result
+      if (typeof result === 'string') {
+        set.headers['content-type'] = 'text/html'
+        return result
+      } else if (result && typeof result.html === 'string') {
+        set.status = result.statusCode || 200
+        set.headers['content-type'] = 'text/html'
+
+        // Apply any additional headers
+        if (result.headers) {
+          Object.entries(result.headers).forEach(([key, value]) => {
+            set.headers[key] = value
+          })
+        }
+
+        return result.html
+      } else {
+        throw new Error(`Invalid SSR result: ${typeof result}`)
       }
-
-      const mockRes = {
-        statusMessage: 'OK',
-        status: (code) => {
-          set.status = code
-          return mockRes
-        },
-        setHeader: (name, value) => {
-          set.headers[name] = value
-        },
-        end: (data) => data,
-        write: () => {},
-      }
-
-      // Render the page
-      const html = await entry.render({
-        req: mockReq,
-        res: mockRes,
-        head: viteHead,
-      })
-
-      // Set content type for HTML
-      set.headers['content-type'] = 'text/html'
-
-      return html
     } catch (e) {
       !isProd && vite?.ssrFixStacktrace(e)
       console.error('SSR Error:', e.stack)

@@ -1,4 +1,4 @@
-// Removed pipeline import - using direct stream handling instead
+// src/entry-server.tsx - SIMPLIFIED VERSION
 import {
   RouterServer,
   createRequestHandler,
@@ -7,65 +7,57 @@ import {
 import { createRouter } from './router'
 import './fetch-polyfill'
 
-export async function render({
-  req,
-  res,
-  head,
-}: {
-  head: string
-  req: any
-  res: any
-}) {
-  // Convert the express request to a fetch request
-  const url = new URL(req.originalUrl || req.url, 'https://localhost:5173').href
-
-  const request = new Request(url, {
-    method: req.method,
-    headers: (() => {
-      const headers = new Headers()
-      for (const [key, value] of Object.entries(req.headers)) {
-        headers.set(key, value as any)
-      }
-      return headers
-    })(),
-  })
-
-  // Create a request handler
-  const handler = createRequestHandler({
-    request,
-    createRouter: () => {
-      const router = createRouter()
-
-      // Update each router instance with the head info from vite
-      router.update({
-        context: {
-          ...router.options.context,
-          head: head,
-        },
-      })
-      return router
-    },
-  })
-
-  // Let's use the default stream handler to create the response
-  const response = await handler(({ request, responseHeaders, router }) =>
-    renderRouterToStream({
-      request,
-      responseHeaders,
-      router,
-      children: <RouterServer router={router} />,
+export async function render(pathname: string, viteHead: string = '') {
+  try {
+    const url = `http://localhost:3000${pathname}`
+    const request = new Request(url, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'text/html',
+      },
     })
-  )
 
-  // Convert the fetch response back to an express response
-  res.statusMessage = response.statusText
-  res.status(response.status)
+    const handler = createRequestHandler({
+      request,
+      createRouter: () => {
+        const router = createRouter()
 
-  response.headers.forEach((value, name) => {
-    res.setHeader(name, value)
-  })
+        if (viteHead) {
+          router.update({
+            context: {
+              ...router.options.context,
+              head: viteHead,
+            },
+          })
+        }
 
-  // Read the response body as text
-  const html = await response.text()
-  return html
+        return router
+      },
+    })
+
+    const response = await handler(({ request, responseHeaders, router }) =>
+      renderRouterToStream({
+        request,
+        responseHeaders,
+        router,
+        children: <RouterServer router={router} />,
+      })
+    )
+
+    // Get HTML as string
+    const html = await response.text()
+
+    return {
+      html,
+      statusCode: response.status,
+      headers: Object.fromEntries(response.headers.entries()),
+    }
+  } catch (error) {
+    console.error('❌ SSR Render Error:', error)
+    return {
+      html: `<html><body><h1>SSR Error</h1><pre>${error instanceof Error ? error.stack : 'Unknown error'}</pre></body></html>`,
+      statusCode: 500,
+      headers: { 'content-type': 'text/html' },
+    }
+  }
 }
